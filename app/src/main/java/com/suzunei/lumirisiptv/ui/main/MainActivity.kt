@@ -55,7 +55,16 @@ private fun MainContent(
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val holder = remember { PlayerHolder(context).also(onHolderCreated) }
+    val holder = remember {
+        PlayerHolder(
+            context = context,
+            onError = { err ->
+                val code = err.errorCodeName
+                val cause = err.cause?.javaClass?.simpleName.orEmpty()
+                viewModel.setPlayerError("Playback error: $code${if (cause.isNotBlank()) " ($cause)" else ""}")
+            },
+        ).also(onHolderCreated)
+    }
 
     DisposableEffect(Unit) {
         onDispose { holder.release() }

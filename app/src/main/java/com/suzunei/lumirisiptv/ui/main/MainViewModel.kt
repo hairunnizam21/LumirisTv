@@ -116,6 +116,10 @@ class MainViewModel(
         }
     }
 
+    fun setPlayerError(message: String) {
+        _state.update { it.copy(errorMessage = message) }
+    }
+
     fun consumeError() {
         _state.update { it.copy(errorMessage = null) }
     }

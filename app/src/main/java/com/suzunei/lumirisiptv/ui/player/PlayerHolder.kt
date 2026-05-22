@@ -25,7 +25,10 @@ import com.suzunei.lumirisiptv.domain.model.Channel
  * so seek-back and surface reuse are cheap.
  */
 @OptIn(UnstableApi::class)
-class PlayerHolder(context: Context) {
+class PlayerHolder(
+    context: Context,
+    private val onError: (PlaybackException) -> Unit = {},
+) {
 
     private val httpDataSourceFactory = OkHttpDataSource.Factory(NetworkModule.okHttpClient)
         .setUserAgent(USER_AGENT)
@@ -71,6 +74,7 @@ class PlayerHolder(context: Context) {
             setHandleAudioBecomingNoisy(true)
             addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
+                    onError(error)
                     // Transient I/O errors (e.g. CDN hiccups) — kick the player back into action.
                     if (error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
                         error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||

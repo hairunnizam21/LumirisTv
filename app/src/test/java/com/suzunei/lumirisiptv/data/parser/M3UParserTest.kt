@@ -82,7 +82,7 @@ class M3UParserTest {
 
         val ch = categories.single().channels.single()
         assertEquals(
-            "https://docs.google.com/uc?export=download&id=1svDo4PB5D5WpMvwRzk0kzAi4A4U-KQ_L",
+            "https://drive.usercontent.google.com/download?id=1svDo4PB5D5WpMvwRzk0kzAi4A4U-KQ_L&export=download&confirm=t",
             ch.streamUrl,
         )
     }

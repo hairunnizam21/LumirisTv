@@ -2,6 +2,7 @@ package com.suzunei.lumirisiptv.ui.main
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -19,6 +20,7 @@ import com.suzunei.lumirisiptv.util.applyImmersiveLandscape
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    private var holder: PlayerHolder? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -26,7 +28,10 @@ class MainActivity : ComponentActivity() {
         applyImmersiveLandscape()
         setContent {
             LumirisTheme {
-                MainContent(viewModel = viewModel)
+                MainContent(
+                    viewModel = viewModel,
+                    onHolderCreated = { holder = it },
+                )
             }
         }
     }
@@ -34,14 +39,23 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         applyImmersiveLandscape()
+        holder?.onResume()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        holder?.onPause()
     }
 }
 
 @Composable
-private fun MainContent(viewModel: MainViewModel) {
+private fun MainContent(
+    viewModel: MainViewModel,
+    onHolderCreated: (PlayerHolder) -> Unit,
+) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val holder = remember { PlayerHolder(context) }
+    val holder = remember { PlayerHolder(context).also(onHolderCreated) }
 
     DisposableEffect(Unit) {
         onDispose { holder.release() }
@@ -51,11 +65,16 @@ private fun MainContent(viewModel: MainViewModel) {
         state.currentChannel?.let { holder.play(it) }
     }
 
+    BackHandler(enabled = state.isFullscreen) {
+        viewModel.exitFullscreen()
+    }
+
     MainScreen(
         state = state,
         player = holder.player,
         onChannelClick = viewModel::selectChannel,
         onRefresh = viewModel::refresh,
+        onToggleFullscreen = viewModel::toggleFullscreen,
         onErrorShown = viewModel::consumeError,
     )
 }

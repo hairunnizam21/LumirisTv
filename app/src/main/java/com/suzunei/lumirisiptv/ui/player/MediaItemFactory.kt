@@ -8,6 +8,10 @@ import com.suzunei.lumirisiptv.domain.model.Channel
 /**
  * Builds a Media3 [MediaItem] from a [Channel]. Handles MIME hinting and optional ClearKey DRM
  * (typical for DASH manifests in this playlist).
+ *
+ * The ClearKey license response (W3C-compliant JSON) is carried on the [MediaItem.DrmConfiguration]
+ * as `keySetId` raw bytes. [LumirisDrmSessionManagerProvider] later reads those bytes and feeds
+ * them to a [androidx.media3.exoplayer.drm.LocalMediaDrmCallback] — no network round-trip happens.
  */
 object MediaItemFactory {
 
@@ -21,13 +25,15 @@ object MediaItemFactory {
         }
 
         channel.drmKey?.let { kidKey ->
-            val (kidHex, keyHex) = kidKey.split(":", limit = 2)
-                .let { it[0] to it.getOrElse(1) { "" } }
+            val parts = kidKey.split(":", limit = 2)
+            val kidHex = parts.getOrNull(0).orEmpty()
+            val keyHex = parts.getOrNull(1).orEmpty()
             if (kidHex.isNotBlank() && keyHex.isNotBlank()) {
-                val licenseJson = buildClearKeyLicense(kidHex, keyHex)
+                val license = buildClearKeyLicense(kidHex, keyHex).toByteArray(Charsets.UTF_8)
                 builder.setDrmConfiguration(
                     MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                        .setKeySetId(licenseJson.toByteArray(Charsets.UTF_8))
+                        .setKeySetId(license)
+                        .setMultiSession(false)
                         .build(),
                 )
             }
@@ -37,10 +43,10 @@ object MediaItemFactory {
     }
 
     /**
-     * Builds the JSON ClearKey license body required by ExoPlayer's LocalMediaDrmCallback.
-     * KID/key are converted from hex to base64-url (no padding) per the ClearKey spec.
+     * Builds the JSON ClearKey license body that ExoPlayer's `LocalMediaDrmCallback` expects.
+     * KID/key are hex in the playlist; the JWK Set spec requires base64-url-without-padding.
      */
-    private fun buildClearKeyLicense(kidHex: String, keyHex: String): String {
+    internal fun buildClearKeyLicense(kidHex: String, keyHex: String): String {
         val kid = base64Url(hexToBytes(kidHex))
         val key = base64Url(hexToBytes(keyHex))
         return """{"keys":[{"kty":"oct","k":"$key","kid":"$kid"}],"type":"temporary"}"""

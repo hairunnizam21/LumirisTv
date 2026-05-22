@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
  * @param currentChannel the channel currently bound to the player. Null until the playlist loads.
  * @param isLoading true for the initial full-screen load.
  * @param isRefreshing true when a manual refresh is in flight (inline spinner only).
+ * @param isFullscreen true when the user has tapped the player to hide the channel list.
  * @param errorMessage transient error to surface in a snackbar / toast.
  */
 data class MainUiState(
@@ -25,6 +26,7 @@ data class MainUiState(
     val currentChannel: Channel? = null,
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
+    val isFullscreen: Boolean = false,
     val errorMessage: String? = null,
 )
 
@@ -102,6 +104,16 @@ class MainViewModel(
 
     fun selectChannel(channel: Channel) {
         _state.update { it.copy(currentChannel = channel) }
+    }
+
+    fun toggleFullscreen() {
+        _state.update { it.copy(isFullscreen = !it.isFullscreen) }
+    }
+
+    fun exitFullscreen() {
+        if (_state.value.isFullscreen) {
+            _state.update { it.copy(isFullscreen = false) }
+        }
     }
 
     fun consumeError() {

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IPTV providers commonly serve DASH/HLS segments over plain HTTP (e.g. perfecttv.net rewrites
+    its manifests to point at http://linearjitp-playback.astro.com.my/...). Android 9+ blocks
+    cleartext traffic by default, which surfaces as ERROR_CODE_IO_NETWORK_CONNECTION_FAILED.
+    Allow cleartext globally so the player can fetch any provider's media segments.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

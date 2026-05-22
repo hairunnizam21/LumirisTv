@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="lumiris_background">#FF0B0B14</color>
+    <color name="lumiris_primary">#FF6C5CE7</color>
+    <color name="lumiris_secondary">#FFE5C46B</color>
+    <color name="lumiris_on_surface">#FFE7E7F0</color>
+</resources>

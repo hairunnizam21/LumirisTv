@@ -70,22 +70,38 @@ class DashClearKeyInterceptor : Interceptor {
         }
     }
 
-    /** Build a v0 PSSH box with ClearKey SystemID and a JSON payload listing the KID. */
+    /**
+     * Build a **CENC v1** PSSH box (ISO/IEC 23001-7) listing the KID(s) in binary form.
+     * Android's ClearKey CDM (`InitDataParser::parsePssh`) only accepts v1 cenc PSSH for the
+     * `urn:uuid:e2719d58-…` scheme — it ignores the JSON-in-PSSH-data format used by the W3C
+     * EME license request body. Layout:
+     *
+     * ```
+     *   uint32 size       // total box size in bytes
+     *   char[4] 'pssh'
+     *   uint8  version=1
+     *   uint8[3] flags=0
+     *   uint8[16] SystemID  // ClearKey UUID
+     *   uint32 KID_count
+     *   uint8[16][KID_count] KIDs
+     *   uint32 DataSize=0
+     * ```
+     */
     @OptIn(ExperimentalEncodingApi::class)
     internal fun buildClearKeyPssh(kidHex: String): String {
         val kidBytes = hexToBytes(kidHex)
-        val kidB64 = Base64.UrlSafe.encode(kidBytes).trimEnd('=')
-        val json = """{"kids":["$kidB64"],"type":"temporary"}"""
-        val data = json.toByteArray(Charsets.UTF_8)
+        require(kidBytes.size == 16) { "KID must be 16 bytes, got ${kidBytes.size}" }
 
-        val boxSize = 4 + 4 + 4 + CLEARKEY_UUID_BYTES.size + 4 + data.size
+        val boxSize = 4 + 4 + 4 + CLEARKEY_UUID_BYTES.size + 4 + kidBytes.size + 4
         val buf = ByteBuffer.allocate(boxSize).order(ByteOrder.BIG_ENDIAN)
         buf.putInt(boxSize)
         buf.put(byteArrayOf('p'.code.toByte(), 's'.code.toByte(), 's'.code.toByte(), 'h'.code.toByte()))
-        buf.putInt(0) // version (0) + flags (0)
+        buf.put(1.toByte()) // version 1
+        buf.put(byteArrayOf(0, 0, 0)) // flags
         buf.put(CLEARKEY_UUID_BYTES)
-        buf.putInt(data.size)
-        buf.put(data)
+        buf.putInt(1) // KID count
+        buf.put(kidBytes)
+        buf.putInt(0) // DataSize = 0
         return Base64.encode(buf.array())
     }
 

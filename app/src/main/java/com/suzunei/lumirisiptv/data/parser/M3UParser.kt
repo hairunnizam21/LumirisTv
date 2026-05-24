@@ -1,6 +1,6 @@
 package com.suzunei.lumirisiptv.data.parser
 
-import com.suzunei.lumirisiptv.data.util.GoogleDriveUrlHelper
+import com.suzunei.lumirisiptv.data.util.DirectUrlHelper
 import com.suzunei.lumirisiptv.domain.model.Category
 import com.suzunei.lumirisiptv.domain.model.Channel
 
@@ -31,7 +31,8 @@ class M3UParser {
         ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg", ".ico",
     )
     private val streamExtensions = listOf(
-        ".mpd", ".m3u8", ".mp4", ".mkv", ".webm", ".ts", ".mov", ".flv",
+        ".mpd", ".m3u8", ".m3u", ".mp4", ".m4v", ".mkv", ".webm", ".ts", ".mov", ".flv",
+        ".mp3", ".aac", ".flac", ".ogg", ".wav",
     )
 
     fun parse(raw: String): List<Category> {
@@ -90,7 +91,7 @@ class M3UParser {
                     pendingExtInf = null
                     val cat = info.groupTitle ?: currentCategory ?: DEFAULT_CATEGORY
                     ensureCategory(cat)
-                    val streamUrl = GoogleDriveUrlHelper.convert(line)
+                    val streamUrl = DirectUrlHelper.convert(line)
                     val drmKey = info.extras
                         .mapNotNull { extractClearKey(it) }
                         .firstOrNull()
@@ -145,7 +146,7 @@ class M3UParser {
 
         val finalStream = streamUrl ?: return null
         val finalName = name?.ifBlank { null } ?: "Untitled"
-        val converted = GoogleDriveUrlHelper.convert(finalStream)
+        val converted = DirectUrlHelper.convert(finalStream)
         return Channel(
             id = stableId(finalName, converted),
             name = finalName,
@@ -173,9 +174,12 @@ class M3UParser {
         if (!isAnyUrl(line)) return false
         val lower = line.lowercase()
         val pathOnly = lower.substringBefore('?')
-        if (streamExtensions.any { pathOnly.endsWith(it) || pathOnly.contains("$it?") }) return true
-        if (GoogleDriveUrlHelper.isDriveUrl(line)) return true
-        if (lower.contains("/dash/") || lower.contains("manifest")) return true
+        val query = lower.substringAfter('?', missingDelimiterValue = "")
+        if (streamExtensions.any { pathOnly.endsWith(it) || pathOnly.contains("$it/") || pathOnly.contains("$it?") }) return true
+        if (DirectUrlHelper.isShareUrl(line)) return true
+        if (lower.contains("/dash/") || lower.contains("/hls/") || lower.contains("manifest")) return true
+        if (query.contains("format=m3u8") || query.contains("format=mpd") ||
+            query.contains("type=hls") || query.contains("type=dash")) return true
         return false
     }
 

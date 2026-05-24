@@ -49,6 +49,12 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        // Let stubbed Android utility methods (e.g. android.util.Log) return defaults instead of
+        // throwing "not mocked" RuntimeExceptions under plain JUnit (no Robolectric).
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

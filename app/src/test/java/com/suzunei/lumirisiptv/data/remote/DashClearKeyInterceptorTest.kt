@@ -3,6 +3,7 @@ package com.suzunei.lumirisiptv.data.remote
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,5 +60,63 @@ class DashClearKeyInterceptorTest {
         val pssh = interceptor.buildClearKeyPssh("912760c409eb5aff3e060422c502f410")
         assertNotNull(pssh)
         assertTrue("PSSH should be non-empty base64", pssh.isNotEmpty())
+    }
+
+    // --- KID normalization ---
+
+    @Test
+    fun normalizesCanonicalUuidKid() {
+        val normalized = interceptor.normalizeKid("912760c4-09eb-5aff-3e06-0422c502f410")
+        assertEquals("912760c409eb5aff3e060422c502f410", normalized)
+    }
+
+    @Test
+    fun normalizesUndashedHexKid() {
+        val normalized = interceptor.normalizeKid("912760c409eb5aff3e060422c502f410")
+        assertEquals("912760c409eb5aff3e060422c502f410", normalized)
+    }
+
+    /** Regression for `IllegalArgumentException: KID must be 16 bytes, got 15`. */
+    @Test
+    fun padsLeadingZeroDroppedFromUuidSegment() {
+        // Second segment is 3 hex chars instead of 4 (leading 0 was stripped).
+        val normalized = interceptor.normalizeKid("912760c4-9eb-5aff-3e06-0422c502f410")
+        assertEquals("912760c409eb5aff3e060422c502f410", normalized)
+    }
+
+    @Test
+    fun padsLeadingZeroDroppedFromUndashedHex() {
+        // 31 hex chars — pad with one leading zero to canonical 32.
+        val normalized = interceptor.normalizeKid("12760c409eb5aff3e060422c502f410")
+        assertEquals("012760c409eb5aff3e060422c502f410", normalized)
+        assertEquals(32, normalized?.length)
+    }
+
+    @Test
+    fun rejectsNonHexKid() {
+        assertNull(interceptor.normalizeKid("not-a-hex-string-at-all-zzz-zzzz-zzzzzzzzzzzz"))
+    }
+
+    @Test
+    fun rejectsOversizedSegment() {
+        // Second segment is 5 chars — too long, can't be a UUID segment.
+        assertNull(interceptor.normalizeKid("912760c4-09eb1-5aff-3e06-0422c502f410"))
+    }
+
+    /** End-to-end: a 15-byte (30-char) KID no longer crashes the interceptor. */
+    @Test
+    fun rewriteDoesNotCrashOnMalformedKid() {
+        val xml = """<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc" default_KID="912760c4-9eb-5aff-3e06-0422c502f410" />"""
+        val rewritten = interceptor.rewrite(xml)
+        // KID is repaired so ClearKey is still injected.
+        assertTrue(rewritten.contains("urn:uuid:e2719d58-"))
+    }
+
+    @Test
+    fun rewriteSkipsUnrepairableKidWithoutThrowing() {
+        val xml = """<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc" default_KID="not-hex-zzzz" />"""
+        val rewritten = interceptor.rewrite(xml)
+        assertFalse("ClearKey should NOT be injected for unrepairable KID", rewritten.contains("urn:uuid:e2719d58-"))
+        assertEquals(xml, rewritten)
     }
 }

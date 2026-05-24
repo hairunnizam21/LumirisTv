@@ -1,5 +1,6 @@
 package com.suzunei.lumirisiptv.data.remote
 
+import android.util.Log
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Response
@@ -25,6 +26,11 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  *   2. Append a sibling `<ContentProtection schemeIdUri="urn:uuid:e2719d58-…" …>` element with a
  *      synthesized ClearKey PSSH box (version 0, JSON payload `{"kids":["<b64url(KID)>"],"type":"temporary"}`).
  *
+ * Robustness rules:
+ *   - Manifests up to 50 MB are rewritten; larger payloads pass through untouched to avoid OOM.
+ *   - Malformed KIDs (non-canonical length, stripped leading zeros, etc.) are normalized when
+ *     possible and **skipped silently** when they can't be repaired — the request never crashes.
+ *
  * Media3 now finds matching ClearKey scheme data, hands it to
  * [com.suzunei.lumirisiptv.ui.player.LumirisDrmSessionManagerProvider] which uses
  * [androidx.media3.exoplayer.drm.LocalMediaDrmCallback] (so the actual license JSON — stored in
@@ -37,12 +43,36 @@ class DashClearKeyInterceptor : Interceptor {
         val response = chain.proceed(request)
 
         val path = request.url.encodedPath.lowercase()
-        if (!path.endsWith(".mpd") && !path.endsWith(".mpd.xml")) return response
+        if (!isManifestPath(path)) return response
         if (!response.isSuccessful) return response
 
         val body = response.body ?: return response
-        val raw = body.string()
-        val rewritten = rewrite(raw)
+
+        // Avoid buffering huge manifests into memory. If the server advertises a content length
+        // larger than the cap, just pass the response through. Unknown lengths (-1) are buffered
+        // below with a second-level check on the actual byte count.
+        val contentLength = body.contentLength()
+        if (contentLength > MAX_MANIFEST_BYTES) return response
+
+        val raw = try {
+            body.string()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to read manifest body — passing through", t)
+            return response
+        }
+
+        val rewritten = if (raw.length.toLong() > MAX_MANIFEST_BYTES) {
+            raw
+        } else {
+            try {
+                rewrite(raw)
+            } catch (t: Throwable) {
+                // Never break playback because of a rewrite error. Log and fall back to the raw
+                // manifest — ExoPlayer may still play it (Widevine path, etc.).
+                Log.w(TAG, "ClearKey rewrite failed — serving original manifest", t)
+                raw
+            }
+        }
 
         val contentType = body.contentType()
             ?: "application/dash+xml".toMediaTypeOrNull()
@@ -55,8 +85,16 @@ class DashClearKeyInterceptor : Interceptor {
         return CENC_PROTECTION_REGEX.replace(xml) { match ->
             val rawKid = match.groupValues[1]
             val original = match.value
-            val kidNoDashes = rawKid.replace("-", "")
-            val psshBase64 = buildClearKeyPssh(kidNoDashes)
+            val normalizedKid = normalizeKid(rawKid)
+                ?: return@replace original.also {
+                    Log.w(TAG, "Skipping ClearKey injection: cannot normalize KID '$rawKid'")
+                }
+            val psshBase64 = try {
+                buildClearKeyPssh(normalizedKid)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Skipping ClearKey injection: PSSH build failed for KID '$rawKid'", t)
+                return@replace original
+            }
             val element = buildString {
                 append("\n        <ContentProtection schemeIdUri=\"urn:uuid:")
                 append(CLEARKEY_UUID)
@@ -68,6 +106,45 @@ class DashClearKeyInterceptor : Interceptor {
             }
             "$original$element"
         }
+    }
+
+    /**
+     * Returns a canonical 32-character hex KID (no dashes) or `null` if the input cannot be
+     * coerced into a valid 16-byte identifier.
+     *
+     * Handles the common producer quirks observed in the wild:
+     *   - UUID-form `8-4-4-4-12` strings where a leading zero was stripped from one or more
+     *     segments (e.g. `912760c4-9eb-5aff-3e06-0422c502f410`).
+     *   - Plain hex strings missing a couple of leading zeros (e.g. `9eb...410` → 30 chars).
+     *   - Mixed-case hex.
+     *
+     * If the input is structurally invalid (non-hex chars, segments longer than the canonical
+     * size, etc.) we return `null` rather than guessing — the manifest is left untouched and the
+     * player can still attempt the Widevine path.
+     */
+    internal fun normalizeKid(raw: String): String? {
+        val trimmed = raw.trim().trim('"', '\'').replace("\\s+".toRegex(), "")
+        if (trimmed.isEmpty()) return null
+
+        val hex = if (trimmed.contains('-')) {
+            val segments = trimmed.split('-')
+            if (segments.size != UUID_SEGMENT_LENGTHS.size) return null
+            val padded = StringBuilder(32)
+            for (i in segments.indices) {
+                val seg = segments[i]
+                val expected = UUID_SEGMENT_LENGTHS[i]
+                if (seg.length > expected) return null
+                if (!seg.all { it.isHexDigit() }) return null
+                padded.append(seg.padStart(expected, '0'))
+            }
+            padded.toString()
+        } else {
+            if (!trimmed.all { it.isHexDigit() }) return null
+            if (trimmed.length > 32) return null
+            trimmed.padStart(32, '0')
+        }
+
+        return if (hex.length == 32) hex.lowercase() else null
     }
 
     /**
@@ -115,8 +192,25 @@ class DashClearKeyInterceptor : Interceptor {
         return out
     }
 
+    private fun isManifestPath(lowerPath: String): Boolean {
+        val pathOnly = lowerPath.substringBefore('?')
+        return pathOnly.endsWith(".mpd") ||
+            pathOnly.endsWith(".mpd.xml") ||
+            pathOnly.contains("/manifest")
+    }
+
+    private fun Char.isHexDigit(): Boolean =
+        this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+
     private companion object {
+        const val TAG = "DashClearKeyInterceptor"
         const val CLEARKEY_UUID = "e2719d58-a985-b3c9-781a-b030af78d30e"
+
+        /** Hard cap on manifest size we'll buffer + rewrite. Anything bigger passes through. */
+        const val MAX_MANIFEST_BYTES = 50L * 1024L * 1024L // 50 MB
+
+        val UUID_SEGMENT_LENGTHS = intArrayOf(8, 4, 4, 4, 12)
+
         val CLEARKEY_UUID_BYTES = byteArrayOf(
             0xE2.toByte(), 0x71.toByte(), 0x9D.toByte(), 0x58.toByte(),
             0xA9.toByte(), 0x85.toByte(), 0xB3.toByte(), 0xC9.toByte(),
